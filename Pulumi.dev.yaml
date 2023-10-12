@@ -1,0 +1,22 @@
+encryptionsalt: v1:WIAtge0fSmw=:v1:URE27Y/cQnUf4nQs:UUddxZKJkdvdoqGML9zDikkQ1hWzCg==
+config:
+  aws:profile: "dev"
+  aws:region: "us-east-1"
+  iac-pulumi:internet_gateway: "internetGateway"
+  iac-pulumi:my_internet_gateway: MyDevInternetGateway
+  iac-pulumi:my_private_route_table: MyDevPrivateRouteTable
+  iac-pulumi:my_public_route_table: MyDevPublicRouteTable
+  iac-pulumi:my_vpc_cidr: 10.1.0.0/16
+  iac-pulumi:my_vpc_name: MyDevVPC
+  iac-pulumi:private_route_table: "privateRouteTable"
+  iac-pulumi:private_subnets_cidr:
+    - "10.0.4.0/24"
+    - "10.0.5.0/24"
+    - "10.0.6.0/24"
+  iac-pulumi:public_route_table: "publicRouteTable"
+  iac-pulumi:public_subnets_cidr:
+    - "10.0.1.0/24"
+    - "10.0.2.0/24"
+    - "10.0.3.0/24"
+  iac-pulumi:vpc_cidr: "10.0.0.0/16"
+  iac-pulumi:vpc_name: "myVPC"
