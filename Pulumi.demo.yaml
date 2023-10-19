@@ -1,22 +1,23 @@
-encryptionsalt: v1:PS3kHQlcGDE=:v1:IOb80GXOdTe9eRV+:egnV+Ml+zI5lP69sJOvXO/J14NNAKA==
+encryptionsalt: v1:czqVcPTHgP0=:v1:P4XfYhRshh7xEpWE:OTMmksTWnHRpuUWm49hZHHbbpL6ZJA==
 config:
   aws:profile: "demo"
-  aws:region: "us-west-1"
-  iac-pulumi:internet_gateway: "internetGateway"
+  aws:region: "us-east-1"
+  iac-pulumi:my_vpc_name: "MyDemoVPC"
+  iac-pulumi:ami_id: "ami-057c9c20d9e40d46a"
+  # iac-pulumi:internet_gateway: "internetGateway"
   iac-pulumi:my_internet_gateway: MyDemoInternetGateway
-  iac-pulumi:my_private_route_table: MyDemoPrivateRouteTable
-  iac-pulumi:my_public_route_table: MyDemoPublicRouteTable
-  iac-pulumi:my_vpc_cidr: 10.1.0.0/16
-  iac-pulumi:my_vpc_name: MyDemoVPC
+  iac-pulumi:public_route_table: "publicRouteTable"
   iac-pulumi:private_route_table: "privateRouteTable"
+  # iac-pulumi:my_private_route_table: MyDemoPrivateRouteTable
+  # iac-pulumi:my_public_route_table: MyDemoPublicRouteTable
+  iac-pulumi:my_vpc_cidr: 10.0.0.0/16
   iac-pulumi:private_subnets_cidr:
     - "10.0.4.0/24"
     - "10.0.5.0/24"
     - "10.0.6.0/24"
-  iac-pulumi:public_route_table: "publicRouteTable"
   iac-pulumi:public_subnets_cidr:
     - "10.0.1.0/24"
     - "10.0.2.0/24"
     - "10.0.3.0/24"
-  iac-pulumi:vpc_cidr: "10.0.0.0/16"
-  iac-pulumi:vpc_name: "myVPC"
+  # iac-pulumi:vpc_cidr: "10.0.0.0/16"
+  # iac-pulumi:vpc_name: "myVPC"
