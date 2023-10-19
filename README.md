@@ -1,56 +1,48 @@
-# AWS Infrastructure as Code with Pulumi
-
-This repository contains Infrastructure as Code (IAC) written in Python using Pulumi to provision AWS resources, including a Virtual Private Cloud (VPC), subnets, route tables, and an Internet Gateway. The code is designed to create a basic network infrastructure.
+# Assignment README
 
 ## Prerequisites
+Before you can build and deploy this web application locally, you'll need to ensure that you have the following prerequisites installed:
 
-Before you begin, ensure you have the following prerequisites:
+- [Node.js](https://nodejs.org/)
+- [MySQL](https://www.mysql.com/)
+- [Git](https://git-scm.com/)
 
-- [Pulumi CLI](https://www.pulumi.com/docs/get-started/install/)
-- [Python](https://www.python.org/) (Pulumi uses Python for this example)
-- An AWS account and AWS CLI configured with necessary credentials
+## API Documentation
+For detailed information on the API endpoints, request/response formats, and usage examples, please refer to the [API Documentation]([https://link-to-api-documentation](https://app.swaggerhub.com/apis-docs/csye6225-webapp/cloud-native-webapp/fall2023-a3)).
 
-## Getting Started
+You can find comprehensive documentation on how to interact with the API and perform various actions.
 
-1. Clone this repository to your local machine:
+## Build and Deploy Instructions
 
-   git clone https://github.com/yourusername/aws-pulumi-network.git
-   cd aws-pulumi-network
+### 1. Clone the Repository
+Clone the repository to your local machine:
+### 2. Install Dependencies
+Navigate to the project directory and install the required Node.js dependencies:
+    cd your-repo
+    npm install
+### 3. Setup MySQL Database
+Make sure you have a MySQL database set up and running. Configure the database connection in the project's configuration file, if necessary.
+### 4. Bootstrapping Database
+The application is designed to automatically bootstrap the database at startup. It will create the necessary schema, tables, indexes, and more based on your configuration.
+### 5. Load User Accounts
+Load user account information from a CSV file located at /opt/user.csv. The application will create user accounts based on the data provided in the CSV file. If an account already exists, it will not be updated
+### 6. Hash User Passwords
+User passwords will be hashed using BCrypt before being stored in the database. Security is a top priority
+### 7. Run the Application
+Start the Node.js application:
+    npm start
 
-##Set up a Python virtual environment and install dependencies:
+### 8. Authentication
+To make API calls to authenticated endpoints, you must provide a basic authentication token. The web application supports Token-Based authentication
 
+## Technologies Used
+1. Node.js
+2. Sequelize (ORM for Node.js)
+3. MySQL
+4. Mocha and Chai for integration tests
 
-python -m venv venv
-source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
-pip install -r requirements.txt
+## Additional Notes
+Deletion of user accounts is not supported.
+Users cannot set values for account_created and account_updated fields; any provided values for these fields are ignored.
 
-##Initialize a new Pulumi stack:
-
-pulumi stack init my-pulumi-stack
-
-##Configure your Pulumi stack with necessary variables:
-
-pulumi config set my_vpc_name "MyVPC"
-pulumi config set my_vpc_cidr "10.0.0.0/16"
-pulumi config set my_internet_gateway "MyInternetGateway"
-pulumi config set my_public_route_table "MyPublicRouteTable"
-pulumi config set my_private_route_table "MyPrivateRouteTable"
-
-##Create your AWS infrastructure using Pulumi:
-
-pulumi up
-
-##Review the changes, and if everything looks good, confirm by typing yes. Pulumi will create the specified resources on AWS.
-Once the deployment is complete, you can find the information about your resources in the Pulumi stack outputs.
-
-pulumi stack output
-
-##To clean up and delete the AWS resources, run:
-pulumi destroy
-
-##Project Structure
-Pulumi.yaml: The Pulumi project configuration file.
-Pulumi.dev.yaml: The Pulumi stack configuration file for the development environment.
-main.py: The Pulumi program file, containing the code to create AWS resources.
-requirements.txt: Python dependencies for the project.
-README.md: This documentation file.
+test
