@@ -1,5 +1,5 @@
 import pulumi
-from pulumi_aws import ec2, get_availability_zones
+from pulumi_aws import ec2, get_availability_zones, rds
 from pulumi import Config
 import ipaddress
 from pulumi import export
@@ -28,6 +28,8 @@ private_subnets_cidr = subnets[3:6]
 
 # Create a VPC
 vpc = ec2.Vpc(vpc_name, cidr_block=vpc_cidr,
+              enable_dns_support=True,
+              enable_dns_hostnames=True,
               tags={**common_tag, "Type": "VPC"})
 
 # Create an Internet Gateway
@@ -82,7 +84,7 @@ for i, subnet in enumerate(private_subnets):
 # Application Security Group
 application_sg = ec2.SecurityGroup("applicationSecurityGroup",
                                    vpc_id=vpc.id,
-                                   description="Security group for application servers",
+                                   description="Security group for application server",
                                    ingress=[
                                        ec2.SecurityGroupIngressArgs(
                                            protocol="tcp",
@@ -110,19 +112,150 @@ application_sg = ec2.SecurityGroup("applicationSecurityGroup",
                                        ),
                                        # Add other ports for your application as necessary
                                    ],
+                                   egress=[
+                                        ec2.SecurityGroupEgressArgs(
+                                            protocol="tcp", from_port=3306, to_port=3306, cidr_blocks=["0.0.0.0/0"]),
+                                        ec2.SecurityGroupEgressArgs(
+                                            protocol="-1", from_port=0, to_port=0, cidr_blocks=["0.0.0.0/0"]),
+                                        ],
                                    tags={**common_tag,
                                          "Type": "applicationSecurityGroup"}
                                    )
 
+# Database Security Group
+db_security_group = ec2.SecurityGroup("databaseSecurityGroup",
+                                      vpc_id=vpc.id,
+                                      description="Security group for RDS instances",
+                                      egress=[
+                                        ec2.SecurityGroupEgressArgs(
+                                            protocol="-1", from_port=0, to_port=0, cidr_blocks=["0.0.0.0/0"]),
+                                        ],
+                                      ingress=[
+                                        ec2.SecurityGroupIngressArgs(
+                                            protocol="tcp",
+                                            from_port=3306,  # For MySQL/MariaDB
+                                            to_port=3306,
+                                            security_groups=[application_sg.id]
+                                          )
+                                      ],
+                                      tags={**common_tag, "Type": "databaseSecurityGroup"})
+
+# RDS Subnet Group
+rds_subnet_group = rds.SubnetGroup("db-subnet-group",
+                                   subnet_ids=[
+                                       subnet.id for subnet in private_subnets],
+                                   description="RDS subnet group using private subnets",
+                                   tags={**common_tag, "Type": "RDSSubnetGroup"}
+                                   )
+
+# RDS Parameter Group
+db_parameter_group = rds.ParameterGroup("custom-db-parameter-group",
+                                        family="mysql8.0",  
+                                        description="Custom parameter group for RDS",
+                                        parameters=[
+                                            {
+                                                "name": "character_set_server",
+                                                "value": "utf8"
+                                            },
+                                            {
+                                                "name": "character_set_client",
+                                                "value": "utf8"
+                                            }
+                                        ],
+                                        tags={**common_tag, "Type": "customDbParameterGroup"},
+                                        opts=pulumi.ResourceOptions(delete_before_replace=True))
+
+# RDS Instance
+rds_instance = rds.Instance("csye6225",
+                            engine="mysql", 
+                            instance_class="db.t2.micro",
+                            allocated_storage=25,
+                            storage_type="gp2",
+                            db_name="csye6225",
+                            username="csye6225",
+                            identifier="csye6225",                    
+                            password=config.require_secret("database_password"),
+                            parameter_group_name=db_parameter_group.name,
+                            skip_final_snapshot=True,
+                            vpc_security_group_ids=[db_security_group.id],
+                            db_subnet_group_name=rds_subnet_group.name,
+                            multi_az=False,
+                            publicly_accessible=False,
+                            tags={**common_tag, "Type": "RDSInstance"})
+
+# # User Data for EC2
+# user_data = f"""#!/bin/bash
+# export DB_HOST={rds_instance.endpoint}
+# export DB_USER=csye6225
+# export DB_PASSWORD={config.require_secret("db_password")}
+
+# systemctl daemon-reload
+# systemctl restart webapp
+# """
+
+
+# Split RDS endpoint to remove port number
+end_point = rds_instance.endpoint.apply(lambda endpoint: endpoint.split(":")[0])
+
+# Function to generate the user data script
+def generate_user_data_script(hostname, endpoint, db_password):
+    # hostname = endpoint.split(":")[0]
+    return f"""#!/bin/bash
+    echo "RDS endpoint without port: {hostname}" >> /var/log/userdata.log
+    echo "Complete RDS endpoint: {endpoint}" >> /var/log/userdata.log
+    echo "Database password: {db_password}" >> /var/log/userdata.log
+
+    # Wait/Retry Logic
+    # for i in {{1..30}}; do
+    #     mysql -h {hostname} -u root -p{db_password} -e 'SELECT 1' && break
+    #     echo "Waiting for DB to be ready..." >> /var/log/userdata.log
+    #     sleep 10
+    # done
+
+    # # Reload systemd and restart the service
+    # sudo systemctl daemon-reload
+    # sudo systemctl restart webapp.service
+
+    # Write environment variables to a separate file
+    echo "DB_HOST={hostname}" >> /etc/webapp.env
+    echo "DB_USERNAME=csye6225" >> /etc/webapp.env
+    echo "DB_PASSWORD={db_password}" >> /etc/webapp.env
+    echo "DB_NAME=csye6225" >> /etc/webapp.env
+
+    # Echo the environment variables to the log
+    cat /etc/webapp.env >> /var/log/userdata.log
+
+    # Reload systemd 
+    sudo systemctl daemon-reload
+
+    # Safety check to ensure placeholders are replaced
+    if grep -q "PLACEHOLDER" /etc/webapp.env; then
+        echo "Placeholders are still present! Not starting the service." >> /var/log/userdata.log
+        exit 1
+    else
+        # Introduce a delay before starting the service
+        sleep 30
+        sudo systemctl enable webapp.service
+        sudo systemctl start webapp.service
+    fi
+    """
+
+# Use the apply method to generate the user data script with the RDS endpoint and password
+user_data_script = pulumi.Output.all(end_point, rds_instance.endpoint, config.require_secret("database_password")).apply(
+    lambda args: generate_user_data_script(*args))
+
 # EC2 Instance
 ami_id = config.require("ami_id")  
 ec2_instance = ec2.Instance("webInstance",
-                            ami=ami_id,  # Custom AMI ID
+                            ami=ami_id,  
                             instance_type="t2.micro",
-                            key_name="ec2-ami-key",  # Replace with your key pair
+                            key_name="keypair_webapp",  
                             vpc_security_group_ids=[application_sg.id],
                             # Assuming launching in the first public subnet
                             subnet_id=public_subnets[0].id,
+                            user_data=user_data_script,
+                            opts=pulumi.ResourceOptions(
+                                depends_on=[rds_instance]),
                             root_block_device=ec2.InstanceRootBlockDeviceArgs(
                                 delete_on_termination=True,
                                 volume_size=25,
@@ -136,3 +269,5 @@ pulumi.export("vpc_id", vpc.id)
 pulumi.export("public_subnets", [subnet.id for subnet in public_subnets])
 pulumi.export("private_subnets", [subnet.id for subnet in private_subnets])
 pulumi.export("web_instance_id", ec2_instance.id)
+pulumi.export("rds_instance_endpoint", rds_instance.endpoint)
+pulumi.export('database_password', config.require_secret("database_password"))
