@@ -1,4 +1,4 @@
-# Assignment README
+# README
 
 ## Prerequisites
 Before you can build and deploy this web application locally, you'll need to ensure that you have the following prerequisites installed:
