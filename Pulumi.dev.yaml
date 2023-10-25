@@ -3,7 +3,7 @@ config:
   aws:profile: "dev"
   aws:region: "us-east-1"
   # iac-pulumi:internet_gateway: "internetGateway"
-  iac-pulumi:ami_id: "ami-057c9c20d9e40d46a"
+  iac-pulumi:ami_id: "ami-01a4807a565bd1f61"
   iac-pulumi:my_internet_gateway: MyDevInternetGateway
   # iac-pulumi:my_private_route_table: MyDevPrivateRouteTable
   # iac-pulumi:my_public_route_table: MyDevPublicRouteTable
