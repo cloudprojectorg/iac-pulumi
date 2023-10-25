@@ -1,4 +1,4 @@
-# Assignment README
+# README
 
 ## Prerequisites
 Before you can build and deploy this web application locally, you'll need to ensure that you have the following prerequisites installed:
@@ -45,4 +45,3 @@ To make API calls to authenticated endpoints, you must provide a basic authentic
 Deletion of user accounts is not supported.
 Users cannot set values for account_created and account_updated fields; any provided values for these fields are ignored.
 
-test
