@@ -2,7 +2,7 @@ encryptionsalt: v1:czqVcPTHgP0=:v1:P4XfYhRshh7xEpWE:OTMmksTWnHRpuUWm49hZHHbbpL6Z
 config:
   aws:profile: "demo"
   aws:region: "us-east-1"
-  iac-pulumi:ami_id: "ami-0c385d17f03678ec3"
+  iac-pulumi:ami_id: "ami-0e2a2d1e19633239d"
   iac-pulumi:database_password:
     secure: v1:JkHPKc9AM/7EyX0e:jpA+W237nEbwa4zYtfidh+ygKCh396+FXA==
   iac-pulumi:my_internet_gateway: MyDemoInternetGateway
