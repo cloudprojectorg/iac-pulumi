@@ -201,9 +201,7 @@ end_point = rds_instance.endpoint.apply(lambda endpoint: endpoint.split(":")[0])
 def generate_user_data_script(hostname, endpoint, db_password):
     # hostname = endpoint.split(":")[0]
     return f"""#!/bin/bash
-    echo "RDS endpoint without port: {hostname}" >> /var/log/userdata.log
-    echo "Complete RDS endpoint: {endpoint}" >> /var/log/userdata.log
-    echo "Database password: {db_password}" >> /var/log/userdata.log
+    echo "User data script execution started" | sudo tee -a /var/log/cloud-init-output.log
 
     # Wait/Retry Logic
     # for i in {{1..30}}; do
@@ -216,7 +214,7 @@ def generate_user_data_script(hostname, endpoint, db_password):
     # sudo systemctl daemon-reload
     # sudo systemctl restart webapp.service
 
-    # Write environment variables to a separate file
+    # Write environment variables in separate file
     echo "DB_HOST={hostname}" >> /etc/webapp.env
     echo "DB_USERNAME=csye6225" >> /etc/webapp.env
     echo "DB_PASSWORD={db_password}" >> /etc/webapp.env
@@ -224,6 +222,7 @@ def generate_user_data_script(hostname, endpoint, db_password):
 
     # Echo the environment variables to the log
     cat /etc/webapp.env >> /var/log/userdata.log
+    echo "user data script execution completed" | sudo tee -a /var/log/cloud-init-output.log
 
     # Reload systemd 
     sudo systemctl daemon-reload
