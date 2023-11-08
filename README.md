@@ -1,12 +1,5 @@
 # README
 
-## Prerequisites
-Before you can build and deploy this web application locally, you'll need to ensure that you have the following prerequisites installed:
-
-- [Node.js](https://nodejs.org/)
-- [MySQL](https://www.mysql.com/)
-- [Git](https://git-scm.com/)
-
 ## API Documentation
 For detailed information on the API endpoints, request/response formats, and usage examples, please refer to the [API Documentation]([https://link-to-api-documentation](https://app.swaggerhub.com/apis-docs/csye6225-webapp/cloud-native-webapp/fall2023-a3)).
 
