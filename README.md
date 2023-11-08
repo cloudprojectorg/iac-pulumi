@@ -45,3 +45,54 @@ To make API calls to authenticated endpoints, you must provide a basic authentic
 Deletion of user accounts is not supported.
 Users cannot set values for account_created and account_updated fields; any provided values for these fields are ignored.
 
+# Pulumi Infrastructure Automation for AWS
+
+This project uses Pulumi to automate the provisioning of AWS resources for a web application infrastructure. It includes the setup of a VPC, subnets, an Internet Gateway, RDS instances, EC2 instances, and necessary security groups.
+
+## Features
+
+- Creation of a custom VPC.
+- Provisioning of public and private subnets across multiple availability zones.
+- Setup of an Internet Gateway and route tables.
+- Configuration of RDS for database requirements.
+- Deployment of an EC2 instance for the web application.
+- Management of security groups for application and database layers.
+- Initialization of Route 53 DNS records for domain name resolution.
+
+## Prerequisites
+
+- Pulumi CLI
+- AWS CLI
+- An AWS account with the necessary permissions
+- Python 3.6 or later
+
+## Setup
+
+Before deploying the infrastructure, ensure you have the following:
+
+1. **Install Pulumi CLI**: Follow the instructions on the [Pulumi website](https://www.pulumi.com/docs/get-started/aws/begin/).
+2. **Configure AWS CLI**: Set up your AWS credentials using the AWS CLI with `aws configure`.
+
+## Configuration
+
+The `demo.yaml` file contains the necessary configuration for the Pulumi project. Update this file with your AWS region, resource names, and other specifics.
+
+```yaml
+# Example configuration snippet
+config:
+  aws:region: "us-east-1"
+  iac-pulumi:my_vpc_name: "MyDemoVPC"
+  ...
+
+# Login to Pulumi. This will require a Pulumi account.
+pulumi login
+
+# Select the appropriate stack
+pulumi stack select (your-stack-name)
+
+# Preview the deployment plan
+pulumi preview
+
+# Deploy the infrastructure
+pulumi up
+

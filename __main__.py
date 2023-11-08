@@ -1,8 +1,10 @@
 import pulumi
-from pulumi_aws import ec2, get_availability_zones, rds
+from pulumi_aws import ec2, get_availability_zones, rds, route53, iam
 from pulumi import Config
 import ipaddress
 from pulumi import export
+import json
+import pulumi_aws as aws
 
 # Create a Config instance
 config = Config()
@@ -16,6 +18,11 @@ vpc_cidr = config.require("my_vpc_cidr")
 vpc_internet_gateway = config.require("my_internet_gateway")
 # public_route_table_name = config.require("my_public_route_table")
 # private_route_table_name = config.require("my_private_route_table")
+mailgun_domain = config.require("mailgun_domain")
+mailgun_sender = config.require("mailgun_sender")
+ses_region = config.require("ses_region")
+ses_sender = config.require("ses_sender")
+api_key = config.require_secret('api_key')
 
 # Calculate CIDR blocks for subnets
 network = ipaddress.ip_network(vpc_cidr)
@@ -198,10 +205,12 @@ rds_instance = rds.Instance("csye6225",
 end_point = rds_instance.endpoint.apply(lambda endpoint: endpoint.split(":")[0])
 
 # Function to generate the user data script
-def generate_user_data_script(hostname, endpoint, db_password):
+def generate_user_data_script(hostname, endpoint, db_password, api_key, mailgun_domain, mailgun_sender, ses_region, ses_sender):
     # hostname = endpoint.split(":")[0]
+
     return f"""#!/bin/bash
-    echo "User data script execution started" | sudo tee -a /var/log/cloud-init-output.log
+    set -e
+    echo "User data script started to execute" | sudo tee -a /var/log/cloud-init-output.log
 
     # Wait/Retry Logic
     # for i in {{1..30}}; do
@@ -215,33 +224,106 @@ def generate_user_data_script(hostname, endpoint, db_password):
     # sudo systemctl restart webapp.service
 
     # Write environment variables in separate file
-    echo "DB_HOST={hostname}" >> /etc/webapp.env
-    echo "DB_USERNAME=csye6225" >> /etc/webapp.env
-    echo "DB_PASSWORD={db_password}" >> /etc/webapp.env
-    echo "DB_NAME=csye6225" >> /etc/webapp.env
+    echo "DB_HOST={hostname}" | sudo tee -a /etc/webapp.env
+    echo "DB_USERNAME=csye6225" | sudo tee -a /etc/webapp.env
+    echo "DB_PASSWORD={db_password}" | sudo tee -a /etc/webapp.env
+    echo "DB_NAME=csye6225" | sudo tee -a /etc/webapp.env
+    echo "MAILGUN_API_KEY={api_key}" | sudo tee -a /etc/webapp.env
+    echo "MAILGUN_DOMAIN={mailgun_domain}" | sudo tee -a /etc/webapp.env
+    echo "MAILGUN_SENDER={mailgun_sender}" | sudo tee -a /etc/webapp.env
+
+    # Configuration for SES
+    # echo "SES_REGION=us-east-1" | sudo tee -a /etc/webapp.env
+    # echo "SES_SENDER_EMAIL=noreply@example.com" | sudo tee -a /etc/webapp.env
+    echo "SES_REGION={ses_region}" | sudo tee -a /etc/webapp.env
+    echo "SES_SENDER_EMAIL={ses_sender}" | sudo tee -a /etc/webapp.env
 
     # Echo the environment variables to the log
-    cat /etc/webapp.env >> /var/log/userdata.log
-    echo "user data script execution completed" | sudo tee -a /var/log/cloud-init-output.log
+    # cat /etc/webapp.env >> /var/log/userdata.log
+    echo "DB_HOST=${hostname}" | sudo tee -a /var/log/userdata.log
+    echo "DB_USERNAME=csye6225" | sudo tee -a /var/log/userdata.log
+    echo "DB_NAME=csye6225" | sudo tee -a /var/log/userdata.log
+    echo "MAILGUN_DOMAIN=${mailgun_domain}" | sudo tee -a /var/log/userdata.log
+    echo "MAILGUN_SENDER=${mailgun_sender}" | sudo tee -a /var/log/userdata.log
+    echo "SES_REGION=${ses_region}" | sudo tee -a /var/log/userdata.log
+    echo "SES_SENDER_EMAIL=${ses_sender}" | sudo tee -a /var/log/userdata.log
+
+    # Write Cloudwatch agent configuration to file
+    sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/opt/cloudwatch-config.json
+
+    # Restart the Cloudwatch agent to apply configurations
+    sudo systemctl enable amazon-cloudwatch-agent
+    sudo systemctl restart amazon-cloudwatch-agent
+
+    echo "User data script completed the execution" | sudo tee -a /var/log/cloud-init-output.log
 
     # Reload systemd 
     sudo systemctl daemon-reload
 
-    # Safety check to ensure placeholders are replaced
-    if grep -q "PLACEHOLDER" /etc/webapp.env; then
-        echo "Placeholders are still present! Not starting the service." >> /var/log/userdata.log
-        exit 1
-    else
-        # Introduce a delay before starting the service
-        sleep 30
-        sudo systemctl enable webapp.service
-        sudo systemctl start webapp.service
-    fi
+    # Introduce a delay before starting the service
+    sleep 30
+    sudo systemctl enable webapp.service
+    sudo systemctl start webapp.service
     """
 
 # Use the apply method to generate the user data script with the RDS endpoint and password
-user_data_script = pulumi.Output.all(end_point, rds_instance.endpoint, config.require_secret("database_password")).apply(
-    lambda args: generate_user_data_script(*args))
+user_data_script = pulumi.Output.all(end_point, rds_instance.endpoint, config.require_secret("database_password"),config.require_secret('api_key'), 
+                                     pulumi.Output.from_input(mailgun_domain), pulumi.Output.from_input(mailgun_sender),
+                                     pulumi.Output.from_input(ses_region), pulumi.Output.from_input(ses_sender)).apply(lambda args: generate_user_data_script(*args))
+
+#For EC2 : IAM Role
+role_iam = iam.Role("ec2Role",
+                assume_role_policy=json.dumps({
+                    "Version": "2012-10-17",
+                    "Statement": [{
+                        "Action": "sts:AssumeRole",
+                        "Effect": "Allow",
+                        "Principal": {
+                            "Service": "ec2.amazonaws.com"
+                        }
+                    }]
+                }))
+
+policy_ses = iam.Policy("sesPolicy",
+                        description="Policy to allow EC2 to send emails through SES",
+                        policy=json.dumps({
+                            "Version": "2012-10-17",
+                            "Statement": [{
+                                "Effect": "Allow",
+                                "Action": [
+                                    "ses:SendEmail",
+                                    "ses:SendRawEmail",
+                                    "ses:SendTemplatedEmail"
+                                ],
+                                "Resource": "*"
+                            }]
+                        }))
+
+# Attach custom SES policy with the role
+policy_ses_attachment = iam.RolePolicyAttachment("sesPolicyAttachment",
+                                                 role=role_iam.name,
+                                                 policy_arn=policy_ses.arn)
+
+
+# List policy ARNs you want to attach with the role
+policies = [
+    "arn:aws:iam::aws:policy/AmazonEC2FullAccess",
+    "arn:aws:iam::aws:policy/AmazonRDSFullAccess",
+    "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
+    "arn:aws:iam::aws:policy/AmazonVPCFullAccess",
+    "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy",
+    "arn:aws:iam::aws:policy/IAMUserChangePassword"
+]
+
+# Attach policies with the role
+for policy_arn in policies:
+    attachment = aws.iam.RolePolicyAttachment(f'attach-{policy_arn.split(":")[-1]}',
+                                              policy_arn=policy_arn,
+                                              role=role_iam.name)
+    
+
+# Create EC2 Instance Profile
+profile_instance = iam.InstanceProfile("instanceProfile", role=role_iam.name)
 
 # EC2 Instance
 ami_id = config.require("ami_id")  
@@ -250,6 +332,7 @@ ec2_instance = ec2.Instance("webInstance",
                             instance_type="t2.micro",
                             key_name="keypair_webapp",  
                             vpc_security_group_ids=[application_sg.id],
+                            iam_instance_profile=profile_instance.name,
                             # Assuming launching in the first public subnet
                             subnet_id=public_subnets[0].id,
                             user_data=user_data_script,
@@ -263,6 +346,19 @@ ec2_instance = ec2.Instance("webInstance",
                             tags={**common_tag, "Type": "webInstance"}
                             )
 
+# Access hosted zone ID and domain name from the configuration
+hosted_zone_id = config.require("hosted_zone_id")
+domain_name = config.require("domain_name")
+public_ip = ec2_instance.public_ip # Get the public IP of the EC2 instance
+
+# A type record
+a_record = route53.Record("aTypeRecord",
+                          name=domain_name,
+                          type="A",
+                          zone_id=hosted_zone_id,
+                          ttl=60,
+                          records=[public_ip])    
+
 # Outputs
 pulumi.export("vpc_id", vpc.id)
 pulumi.export("public_subnets", [subnet.id for subnet in public_subnets])
@@ -270,3 +366,5 @@ pulumi.export("private_subnets", [subnet.id for subnet in private_subnets])
 pulumi.export("web_instance_id", ec2_instance.id)
 pulumi.export("rds_instance_endpoint", rds_instance.endpoint)
 pulumi.export('database_password', config.require_secret("database_password"))
+pulumi.export("web_instance_public_ip", ec2_instance.public_ip)
+pulumi.export("dns_a_record", a_record.fqdn)
