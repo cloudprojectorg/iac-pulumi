@@ -6,12 +6,21 @@ from pulumi import export
 import json
 import pulumi_aws as aws
 import base64
+from pulumi_gcp import serviceaccount
+from pulumi_aws import get_caller_identity
+from pulumi_aws import get_region
+from pulumi_gcp import storage
+from pulumi_aws import lambda_
+from pulumi_aws import sns
 
 # Create a Config instance
 config = Config()
+account_id = get_caller_identity().account_id
+region = get_region()
 
 # Resource Tag
 common_tag = {"Name": "my-pulumi-infra"}
+common_tag_low = {k.lower(): v for k, v in common_tag.items()}
 
 # Fetch configurations
 vpc_name = config.require("my_vpc_name")
@@ -24,6 +33,9 @@ ses_sender = config.require("ses_sender")
 api_key = config.require_secret('api_key')
 public_subnets_cidr = config.require_object("public_subnets_cidr")
 private_subnets_cidr = config.require_object("private_subnets_cidr")
+
+# Get the Mailgun API key from the config
+mailgun_api_key_value = config.require_secret("mailgun_api_key")
 
 # Create a VPC
 vpc = ec2.Vpc(vpc_name, cidr_block=vpc_cidr,
@@ -80,6 +92,306 @@ private_route_table = ec2.RouteTable("privateRouteTable", vpc_id=vpc.id, tags={
 for i, subnet in enumerate(private_subnets):
     ec2.RouteTableAssociation(
         f"privateRta-{i}", route_table_id=private_route_table.id, subnet_id=subnet.id)
+    
+# Google Cloud Storage Bucket
+bucket_gcs = storage.Bucket('bucket_submission_github',
+                            name='bucket-submission-github',
+                            location='US',
+                            storage_class='STANDARD',
+                            uniform_bucket_level_access=True,
+                            labels=common_tag_low,
+                            force_destroy=True)    
+
+# Google Service Account
+service_account_gcp = serviceaccount.Account('service_account',
+                                             account_id='submission-service-account',
+                                             display_name='Submission Service Account',
+                                             project=config.require("gcp_project"))
+
+# Google Service Account Keys
+service_account_keys_gcs = serviceaccount.Key('service_account_keys',
+                                              service_account_id=service_account_gcp.name,
+                                              public_key_type='TYPE_X509_PEM_FILE',
+                                              opts=pulumi.ResourceOptions(depends_on=[service_account_gcp]))
+
+# Grant the Storage Admin role to the service account
+service_account_iam_binding_gcs = storage.BucketIAMBinding('service_account_storage_admin',
+                                                           bucket=bucket_gcs.name,
+                                                           role='roles/storage.admin',
+                                                           members=[pulumi.Output.concat("serviceAccount:", service_account_gcp.email)],
+                                                           opts=pulumi.ResourceOptions(depends_on=[service_account_gcp]))
+
+# Save the Service Account key in AWS Secrets Manager
+service_account_secret = aws.secretsmanager.Secret("gcpServiceAccountKey",
+                                                   description="GCP Service Account Key")
+
+service_account_secret_value = aws.secretsmanager.SecretVersion("gcpServiceAccountKeyValue",
+                                                                secret_id=service_account_secret.id,
+                                                                secret_string=service_account_keys_gcs.private_key.apply(
+                                                                    lambda key: base64.b64decode(key).decode('utf-8') if key else None),
+                                                                opts=pulumi.ResourceOptions(depends_on=[service_account_secret, service_account_keys_gcs]))
+
+# Secrets for DynamoDB table, SES email identity, and SES domain
+table_secret_dynamodb = aws.secretsmanager.Secret("DynamoDbTableSecret",
+                                                  description="DynamoDB table name for the email tracking")
+
+email_identity_secret_ses = aws.secretsmanager.Secret("SesEmailIdentitySecret",
+                                                      description="SES email identity for the Lambda function")
+
+domain_secret_ses = aws.secretsmanager.Secret("SesDomainSecret",
+                                              description="SES domain for the Lambda function")
+
+bucket_name_secret_gcs = aws.secretsmanager.Secret("gcsBucketNameSecret",
+                                                   description="GCS bucket name for file uploads")
+
+# Secret values
+table_secret_value_dynamodb = aws.secretsmanager.SecretVersion("DynamoDbTableSecretValue",
+                                                               secret_id=table_secret_dynamodb.id,
+                                                               secret_string=config.require("dynamo_db_table"))
+
+email_identity_secret_value_ses = aws.secretsmanager.SecretVersion("SesEmailIdentitySecretValue",
+                                                                   secret_id=email_identity_secret_ses.id,
+                                                                   secret_string=config.require("mailgun_sender"))
+
+domain_secret_value_ses = aws.secretsmanager.SecretVersion("SesDomainSecretValue",
+                                                           secret_id=domain_secret_ses.id,
+                                                           secret_string=config.require("mailgun_domain"))
+
+bucket_name_secret_value_gcs = aws.secretsmanager.SecretVersion("gcsBucketNameSecretValue",
+                                                                secret_id=bucket_name_secret_gcs.id,
+                                                                secret_string=bucket_gcs.name.apply(
+                                                                    lambda name: json.dumps({"gcs_bucket_name": name})),
+                                                                opts=pulumi.ResourceOptions(depends_on=[bucket_name_secret_gcs]))
+
+mailgun_api_key_secret = aws.secretsmanager.Secret("mailgunApiKey",
+                                                   description="Mailgun API Key")
+
+mailgun_api_key_secret_value = aws.secretsmanager.SecretVersion("mailgunApiKeyValue",
+                                                                secret_id=mailgun_api_key_secret.id,
+                                                                secret_string=mailgun_api_key_value)
+
+mailgun_domain_secret = aws.secretsmanager.Secret("mailgunDomain",
+                                                  description="Mailgun Domain")
+
+mailgun_domain_secret_value = aws.secretsmanager.SecretVersion("mailgunDomainValue",
+                                                               secret_id=mailgun_domain_secret.id,
+                                                               secret_string=config.require("mailgun_domain"))
+
+# Create an SNS topic
+sns_topic = aws.sns.Topic('assignmentSubmissionTopic',
+                          display_name='Assignment Submission Notifications')
+
+# DynamoDB Table for Email Tracking
+email_tracking_table = aws.dynamodb.Table('EmailTrackingTable',
+                                          attributes=[
+                                              aws.dynamodb.TableAttributeArgs(
+                                                  # This should be the unique identifier for the request
+                                                  name='RequestId',  
+                                                  # 'S' stands for string, which is suitable for an ID
+                                                  type='S',  
+                                              ),
+                                          ],
+                                          billing_mode='PAY_PER_REQUEST',
+                                          hash_key='RequestId',
+                                          name="EmailTrackingTable",
+                                          tags={
+                                              'Name': 'EmailTracking',
+                                              **common_tag,})
+
+# IAM Role for Lambda Function
+role_lambda = iam.Role('lambdaRole',
+                       assume_role_policy=json.dumps({
+                           "Version": "2012-10-17",
+                           "Statement": [{
+                               "Action": "sts:AssumeRole",
+                               "Effect": "Allow",
+                               "Principal": {
+                                   "Service": "lambda.amazonaws.com"
+                               }
+                           }]
+                       }))
+
+# Define the AWSLambdaBasicExecutionRole policy
+lambda_execution_policy = iam.Policy("lambdaExecutionPolicy",
+                                     description="AWS Lambda Basic Execution Role",
+                                     policy=json.dumps({
+                                         "Version": "2012-10-17",
+                                         "Statement": [{
+                                            "Effect": "Allow",
+                                            "Action": [
+                                                 "logs:CreateLogGroup",
+                                                 "logs:CreateLogStream",
+                                                 "logs:PutLogEvents"
+                                            ],
+                                             "Resource": "arn:aws:logs:::*"
+                                         },
+                                         {
+                                            "Effect": "Allow",
+                                            "Action": "logs:CreateLogGroup",
+                                            "Resource": "arn:aws:logs:us-east-1:949500228056:*"
+                                         },
+                                         {
+                                            "Effect": "Allow",
+                                            "Action": [
+                                                "logs:CreateLogStream",
+                                                "logs:PutLogEvents"
+                                            ],
+                                            "Resource": [
+                                                "arn:aws:logs:us-east-1:949500228056:log-group:/aws/lambda/AssignmentSubmissionHandler:*"
+                                            ]
+                                        }
+                                         ]
+                                     }))
+
+# Attach the custom policy to the lambdaRole
+lambda_execution_policy_attachment = iam.RolePolicyAttachment("lambdaExecutionPolicyAttachment",
+                                                              role=role_lambda.name,
+                                                              policy_arn=lambda_execution_policy.arn)
+
+caller_identity = aws.get_caller_identity()
+aws_region = aws.get_region()
+resource_string = f"arn:aws:logs:{region.name}:{account_id}:*"
+
+policy_document_json = pulumi.Output.all(
+                                        region=region.name,
+                                        account_id=account_id,
+                                        sns_topic_arn=sns_topic.arn,
+                                        email_tracking_table_arn=email_tracking_table.arn,
+                                        dynamodb_table_secret_arn=table_secret_dynamodb.arn,
+                                        ses_email_identity_secret_arn=email_identity_secret_ses.arn,
+                                        mailgun_email_identity_secret_arn=mailgun_api_key_secret.arn,
+                                        mailgun_domian_secret_arn=mailgun_domain_secret.arn,
+                                        ses_domain_secret_arn=domain_secret_ses.arn,
+                                        service_account_secret_arn=service_account_secret.arn,
+                                        gcs_bucket_name_secret_arn=bucket_name_secret_gcs.arn,
+                                        ).apply(lambda args: json.dumps({
+                                            "Version": "2012-10-17",
+                                            "Statement": [
+                                                {
+                                                    "Effect": "Allow",
+                                                    "Action": ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
+                                                    "Resource": resource_string  
+                                                },
+                                                {
+                                                    "Effect": "Allow",
+                                                    "Action": "sns:Publish",
+                                                    "Resource": args['sns_topic_arn']
+                                                },
+                                                {
+                                                    "Effect": "Allow",
+                                                    "Action": [
+                                                        "dynamodb:GetItem",
+                                                        "dynamodb:PutItem",
+                                                        "dynamodb:UpdateItem",
+                                                        "dynamodb:DeleteItem",
+                                                        "dynamodb:Scan",
+                                                        "dynamodb:Query"
+                                                    ],
+                                                    "Resource": args['email_tracking_table_arn']
+                                                },
+                                                {
+                                                    "Effect": "Allow",
+                                                    "Action": [
+                                                        "ses:SendEmail",
+                                                        "ses:SendRawEmail"
+                                                    ],
+                                                    "Resource": "*"
+                                                },
+                                                {
+                                                    "Effect": "Allow",
+                                                    "Action": "secretsmanager:GetSecretValue",
+                                                    # Here we must construct the list manually using keys
+                                                    "Resource": [
+                                                        args['dynamodb_table_secret_arn'],
+                                                        args['ses_email_identity_secret_arn'],
+                                                        args['ses_domain_secret_arn'],
+                                                        args['service_account_secret_arn'],
+                                                        args['gcs_bucket_name_secret_arn'],
+                                                        args['mailgun_email_identity_secret_arn'],
+                                                        args['mailgun_domian_secret_arn']
+                                                    ]
+                                                }
+                                            ]}, indent=4))
+
+# Use the policy document to create the IAM policy resource
+iam_policy_lambda = policy_document_json.apply(lambda policy_json: aws.iam.Policy(
+                                            "LambdaIAMPolicy",
+                                            description="IAM Policy for Lambda to interact with other services",
+                                            policy=policy_json,
+                                            opts=pulumi.ResourceOptions(delete_before_replace=True)
+                                        ))
+
+iam_policy_arn_lambda = iam_policy_lambda.arn.apply(lambda arn: arn)
+
+# Attach the IAM policy to the Lambda execution role
+iam_policy_attachment_lambda = pulumi.Output.all(iam_policy_arn_lambda, role_lambda.name).apply(lambda args: aws.iam.RolePolicyAttachment(
+                                                "LambdaIAMPolicyAttachment",
+                                                role=args[1],
+                                                policy_arn=args[0],
+                                                opts=pulumi.ResourceOptions(delete_before_replace=True)
+                                            ))
+
+absolute_path_to_zip = "C:/Users/Shinde/Documents/Anuja/MSIS_CourseWork/Semester3/CloudMain/Assignment9/function.zip"
+
+
+code = pulumi.AssetArchive({
+    '.': pulumi.FileArchive(absolute_path_to_zip)
+})
+
+# Lambda Function
+lambda_function = lambda_.Function('submissionLambda',
+                                   role=role_lambda.arn,
+                                   runtime='python3.8',
+                                   handler='serverless.handler_lambda',
+                                   code=code,
+                                   environment={
+                                       'variables': {
+                                           'GCS_BUCKET_SECRET_ARN': bucket_name_secret_gcs.arn,
+                                           'SES_REGION': ses_region,
+                                           'DYNAMODB_TABLE_SECRET_ARN': table_secret_dynamodb.arn,
+                                           'MAILGUN_API_KEY_SECRET_ARN': mailgun_api_key_secret.arn,
+                                           'MAILGUN_DOMAIN_SECRET_ARN': mailgun_domain_secret.arn,
+                                           'SES_EMAIL_IDENTITY_SECRET_ARN': email_identity_secret_ses.arn,
+                                           'SES_DOMAIN_SECRET_ARN': domain_secret_ses.arn,
+                                           'GCP_SERVICE_ACCOUNT_SECRET_ARN': service_account_secret.arn,
+                                       }
+                                   },
+                                   timeout=60,
+                                   opts=pulumi.ResourceOptions(depends_on=[iam_policy_attachment_lambda]))
+
+invoke_policy_lambda = iam.Policy("lambdaInvokePolicy",
+                                  policy=pulumi.Output.all(sns_topic.arn).apply(lambda arn: json.dumps({
+                                      "Version": "2012-10-17",
+                                      "Statement": [{
+                                          "Effect": "Allow",
+                                          "Action": "lambda:InvokeFunction",
+                                          "Resource": "*",
+                                          "Condition": {
+                                              "ArnLike": {
+                                                  "AWS:SourceArn": arn
+                                              }
+                                          }
+                                      }]
+                                  })))
+
+invoke_policy_attachment_lambda = iam.RolePolicyAttachment("lambdaInvokePolicyAttachment",
+                                                           role=role_lambda.name,
+                                                           policy_arn=invoke_policy_lambda.arn)
+
+# Permission for the SNS Topic to invoke the Lambda function
+permission_lambda = lambda_.Permission("lambdaPermission",
+                                       action="lambda:InvokeFunction",
+                                       function=lambda_function.arn,
+                                       principal="sns.amazonaws.com",
+                                       source_arn=sns_topic.arn,
+                                       opts=pulumi.ResourceOptions(depends_on=[lambda_function]))
+
+# SNS Topic Subscription to the Lambda function
+topic_subscription_sns = sns.TopicSubscription("snsTopicSubscription",
+                                               topic=sns_topic.arn,
+                                               protocol="lambda",
+                                               endpoint=lambda_function.arn,
+                                               opts=pulumi.ResourceOptions(depends_on=[permission_lambda]))
     
 # Load balancer Security Group
 load_balancer_sg = ec2.SecurityGroup('loadBalancerSecurityGroup',
@@ -261,9 +573,10 @@ listener = aws.lb.Listener("listener",
 # Split RDS endpoint to remove port number
 end_point = rds_instance.endpoint.apply(lambda endpoint: endpoint.split(":")[0])
 database_password = config.require_secret("database_password")
+sns_topic_arn = sns_topic.arn
 
 # Function to generate the user data script
-def generate_user_data_script(hostname, password):
+def generate_user_data_script(hostname, password, sns_topic_arn):
     # hostname = endpoint.split(":")[0]
 
     return f"""#!/bin/bash
@@ -295,6 +608,10 @@ def generate_user_data_script(hostname, password):
     # echo "SES_REGION=${ses_region}" | sudo tee -a /var/log/userdata.log
     # echo "SES_SENDER_EMAIL=${ses_sender}" | sudo tee -a /var/log/userdata.log
 
+    # Set the SNS topic ARN as an environment variable
+    echo "SNS_TOPIC_ARN={sns_topic_arn}" | sudo tee -a /etc/webapp.env
+    echo "SNS_TOPIC_ARN={sns_topic_arn}" | sudo tee -a /var/log/userdata.log
+
     # Write Cloudwatch agent configuration to file
     sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/opt/webapp/cloudwatch-agent-config.json
     sudo mv /opt/webapp/cloudwatch-agent-config.json /opt/cloudwatch-config.json
@@ -315,7 +632,7 @@ def generate_user_data_script(hostname, password):
     """
 
 # Use the apply method to generate the user data script with the RDS endpoint and password
-user_data_script = pulumi.Output.all(end_point, database_password).apply(
+user_data_script = pulumi.Output.all(end_point, database_password, sns_topic_arn).apply(
     lambda args: generate_user_data_script(*args))
 
 # Encode user data for use in launch configuration
@@ -516,3 +833,9 @@ pulumi.export("scale_up_policy_arn", scale_up_policy.arn)
 pulumi.export("scale_down_policy_arn", scale_down_policy.arn)
 pulumi.export("load_balancer_dns_name", load_balancer.dns_name)
 pulumi.export("dns_record", dns_alias_record.name)
+pulumi.export('sns_topic_arn', sns_topic.arn)
+pulumi.export('gcs_bucket_name', bucket_gcs.name)
+pulumi.export('gcs_service_account_key', service_account_keys_gcs.private_key)
+pulumi.export('lambda_function_arn', lambda_function.arn)
+pulumi.export('email_tracking_table_name', email_tracking_table.name)
+pulumi.export('sns_topic_subscription_arn', topic_subscription_sns.id)
