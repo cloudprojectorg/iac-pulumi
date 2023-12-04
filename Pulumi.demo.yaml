@@ -3,12 +3,14 @@ config:
   aws:profile: "demo"
   aws:region: "us-east-1"
   gcp:project: optical-victor-406418
+  iac-pulumi:ami_owner: "119898521865"
   iac-pulumi:ami_id: "ami-0a61b18dba2fab6e8"
   iac-pulumi:api_key:
     secure: v1:cib2GD1oJ0qwn7pO:iSfhLry8vNu2B78lYjAnlsIvuOW9xcMiE4YSGRcCYAcRCHXSDG0X7qrT33AzQoR+WtCAbbdXub0Vx2mtFQ09wCje
   iac-pulumi:database_password:
     secure: v1:JkHPKc9AM/7EyX0e:jpA+W237nEbwa4zYtfidh+ygKCh396+FXA==
   iac-pulumi:domain_name: "demo.webappcloud.me"
+  iac-pulumi:certificate_domain: demo.webappcloud.me
   iac-pulumi:dynamo_db_table: EmailTrackingTable
   iac-pulumi:gcp_project: optical-victor-406418
   iac-pulumi:hosted_zone_id: "Z02708011NPKE81BGWEP8"

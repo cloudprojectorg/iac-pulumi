@@ -17,6 +17,11 @@ from pulumi_aws import sns
 config = Config()
 account_id = get_caller_identity().account_id
 region = get_region()
+ami_owner = config.require("ami_owner")
+
+# Fetch the ACM certificate's ARN for your domain
+certificate_domain = config.require("certificate_domain")
+selected_certificate = aws.acm.get_certificate(domain=certificate_domain)
 
 # Resource Tag
 common_tag = {"Name": "my-pulumi-infra"}
@@ -98,6 +103,8 @@ bucket_gcs = storage.Bucket('bucket_submission_github',
                             name='bucket-submission-github',
                             location='US',
                             storage_class='STANDARD',
+                            versioning=storage.BucketVersioningArgs(
+                                enabled=True),
                             uniform_bucket_level_access=True,
                             labels=common_tag_low,
                             force_destroy=True)    
@@ -210,6 +217,36 @@ role_lambda = iam.Role('lambdaRole',
                                }
                            }]
                        }))
+
+# Define the policy with the necessary permissions for managing AMIs, Launch Templates, and AutoScaling Groups
+ami_launch_policy_json = json.dumps({
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "ec2:DescribeImages",
+                "ec2:DescribeLaunchTemplates",
+                "ec2:CreateLaunchTemplate",
+                "ec2:CreateLaunchTemplateVersion",
+                "autoscaling:CreateAutoScalingGroup",
+                "autoscaling:UpdateAutoScalingGroup",
+                "autoscaling:DescribeAutoScalingGroups"
+            ],
+            "Resource": "*"
+        }
+    ]
+})
+
+# Create the IAM policy resource
+ami_launch_policy = aws.iam.Policy("amiLaunchPolicy",
+                                   description="Policy for AMI and Launch Template management",
+                                   policy=ami_launch_policy_json)
+
+# Attach the policy to the IAM Role
+ami_launch_policy_attachment = aws.iam.RolePolicyAttachment("amiLaunchPolicyAttachment",
+                                                            role=role_lambda.name,
+                                                            policy_arn=ami_launch_policy.arn)
 
 # Define the AWSLambdaBasicExecutionRole policy
 lambda_execution_policy = iam.Policy("lambdaExecutionPolicy",
@@ -400,11 +437,6 @@ load_balancer_sg = ec2.SecurityGroup('loadBalancerSecurityGroup',
                                      ingress=[
                                          ec2.SecurityGroupIngressArgs(
                                              protocol='tcp', 
-                                             from_port=80, 
-                                             to_port=80, 
-                                             cidr_blocks=["0.0.0.0/0"]),
-                                         ec2.SecurityGroupIngressArgs(
-                                             protocol='tcp', 
                                              from_port=443, 
                                              to_port=443, 
                                              cidr_blocks=["0.0.0.0/0"]),
@@ -423,11 +455,6 @@ application_sg = ec2.SecurityGroup("applicationSecurityGroup",
                                    vpc_id=vpc.id,
                                    description="Security group for application server",
                                    ingress=[
-                                       ec2.SecurityGroupIngressArgs(
-                                           protocol="tcp",
-                                           from_port=22,
-                                           to_port=22,
-                                           cidr_blocks=["0.0.0.0/0"]),
                                        {
                                            "protocol": "tcp",
                                            "from_port": 8080,
@@ -549,8 +576,10 @@ target_group = aws.lb.TargetGroup("target-group",
 # Listener
 listener = aws.lb.Listener("listener",
                            load_balancer_arn=load_balancer.arn,
-                           port=80,
-                           protocol="HTTP",
+                           port=443,
+                           protocol="HTTPS",
+                           ssl_policy="ELBSecurityPolicy-2016-08",
+                           certificate_arn=selected_certificate.arn,  # SSL Certificate ARN
                            default_actions=[aws.lb.ListenerDefaultActionArgs(
                                type="forward",
                                target_group_arn=target_group.arn
@@ -696,14 +725,21 @@ for policy_arn in policies:
 profile_instance = iam.InstanceProfile("instanceProfile", role=role_iam.name)
 
 # EC2 Instance
-ami_id = config.require("ami_id")  
+# ami_id = config.require("ami_id")  
 
-ami = ec2.get_ami(most_recent=True,
-                  owners=["amazon"],
-                  filters=[{"name":"name","values":["amzn2-ami-hvm-*-x86_64-gp2"]}])
+latest_ami = ec2.get_ami(most_recent=True,
+                         owners=[ami_owner],
+                         filters=[{"name": "name", "values": ["my-custom-ami-*"]}])
+
+# Use the latest AMI ID
+ami_id = latest_ami.id
+
+# ami = ec2.get_ami(most_recent=True,
+#                   owners=["amazon"],
+#                   filters=[{"name":"name","values":["amzn2-ami-hvm-*-x86_64-gp2"]}])
 
 ec2_launch_template = ec2.LaunchTemplate('launchTemplate',
-                                        name_prefix="webapp-lt",
+                                        name='web-app-launch-template',
                                         image_id=ami_id,
                                         instance_type="t2.micro",
                                         key_name="keypair_webapp",
@@ -712,7 +748,7 @@ ec2_launch_template = ec2.LaunchTemplate('launchTemplate',
                                             'security_groups': [application_sg.id]
                                         }],
                                         block_device_mappings=[{
-                                            'device_name': ami.root_device_name,
+                                            'device_name': latest_ami.root_device_name,
                                             'ebs': {
                                                 'volume_size': 25,
                                                 'volume_type': "gp2",
@@ -738,6 +774,7 @@ ec2_launch_template = ec2.LaunchTemplate('launchTemplate',
 
 # Auto Scaling Group
 auto_scaling_group = aws.autoscaling.Group('autoScalingGroup',
+                                           name='auto-scaling-group',
                                            launch_template=aws.autoscaling.GroupLaunchTemplateArgs(
                                                id=ec2_launch_template.id,
                                                version='$Latest'
@@ -828,7 +865,6 @@ dns_alias_record = route53.Record("dnsRecord",
 pulumi.export("vpc_id", vpc.id)
 pulumi.export("public_subnets", [subnet.id for subnet in public_subnets])
 pulumi.export("private_subnets", [subnet.id for subnet in private_subnets])
-pulumi.export("auto_scaling_group_name", auto_scaling_group.name)
 pulumi.export("scale_up_policy_arn", scale_up_policy.arn)
 pulumi.export("scale_down_policy_arn", scale_down_policy.arn)
 pulumi.export("load_balancer_dns_name", load_balancer.dns_name)
@@ -839,3 +875,4 @@ pulumi.export('gcs_service_account_key', service_account_keys_gcs.private_key)
 pulumi.export('lambda_function_arn', lambda_function.arn)
 pulumi.export('email_tracking_table_name', email_tracking_table.name)
 pulumi.export('sns_topic_subscription_arn', topic_subscription_sns.id)
+pulumi.export('lambda_execution_policy.arn', lambda_execution_policy.arn)

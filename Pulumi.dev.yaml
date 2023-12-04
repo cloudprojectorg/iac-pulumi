@@ -2,19 +2,36 @@ encryptionsalt: v1:WIAtge0fSmw=:v1:URE27Y/cQnUf4nQs:UUddxZKJkdvdoqGML9zDikkQ1hWz
 config:
   aws:profile: "dev"
   aws:region: "us-east-1"
-  iac-pulumi:ami_id: "ami-01a4807a565bd1f61"
-  iac-pulumi:my_internet_gateway: MyDevInternetGateway
-  iac-pulumi:hosted_zone_id: "Z0269477V04UGJQRV588"
-  iac-pulumi:domain_name: "webappcloud.me"
-  iac-pulumi:my_vpc_cidr: 10.0.0.0/16
-  iac-pulumi:my_vpc_name: MyDevVPC
+  gcp:project: optical-victor-406418
+  iac-pulumi:ami_owner: "119898521865"
+  iac-pulumi:ami_id: "ami-0a61b18dba2fab6e8"
+  iac-pulumi:api_key:
+    secure: v1:cib2GD1oJ0qwn7pO:iSfhLry8vNu2B78lYjAnlsIvuOW9xcMiE4YSGRcCYAcRCHXSDG0X7qrT33AzQoR+WtCAbbdXub0Vx2mtFQ09wCje
+  iac-pulumi:database_password:
+    secure: v1:JkHPKc9AM/7EyX0e:jpA+W237nEbwa4zYtfidh+ygKCh396+FXA==
+  iac-pulumi:domain_name: "dev.webappcloud.me"
+  iac-pulumi:certificate_domain: dev.webappcloud.me
+  iac-pulumi:dynamo_db_table: EmailTrackingTable
+  iac-pulumi:gcp_project: optical-victor-406418
+  iac-pulumi:hosted_zone_id: "Z02708011NPKE81BGWEP8"
+  iac-pulumi:mailgun_api_key:
+    secure: v1:6DtiwXrF00PdR8s6:zK4tF6fA5feha6jnP+xt097Klf48bsDy+KZVicVcoZGl37UM5z/TXvfhAzHtatOqTX+EMkrgB3WpEcwGHwmIr2mD
+  iac-pulumi:mailgun_domain: demo.webappcloud.me
+  iac-pulumi:mailgun_sender: no-reply@demo.webappcloud.me
+  iac-pulumi:my_internet_gateway: "MyDevInternetGateway"
+  iac-pulumi:my_vpc_cidr: "10.0.0.0/16"
+  iac-pulumi:my_vpc_name: "MyDevVPC"
   iac-pulumi:private_route_table: "privateRouteTable"
-  iac-pulumi:public_route_table: "publicRouteTable"
   iac-pulumi:private_subnets_cidr:
     - "10.0.4.0/24"
     - "10.0.5.0/24"
     - "10.0.6.0/24"
+  iac-pulumi:public_route_table: "publicRouteTable"
   iac-pulumi:public_subnets_cidr:
     - "10.0.1.0/24"
     - "10.0.2.0/24"
     - "10.0.3.0/24"
+  iac-pulumi:ses_domain: demo.webappcloud.me
+  iac-pulumi:ses_email_identity: no-reply@webappcloud.me
+  iac-pulumi:ses_region: us-east-1
+  iac-pulumi:ses_sender: noreply@example.com

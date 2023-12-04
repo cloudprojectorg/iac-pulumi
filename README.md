@@ -89,3 +89,5 @@ pulumi preview
 # Deploy the infrastructure
 pulumi up
 
+#Import AWS Certificate
+aws acm import-certificate --certificate fileb://C:/Users/Shinde/Documents/Anuja/MSIS_CourseWork/Semester3/CloudMain/SSL/demo_webappcloud_me/demo_webappcloud_me.crt --certificate-chain fileb://C:/Users/Shinde/Documents/Anuja/MSIS_CourseWork/Semester3/CloudMain/SSL/demo_webappcloud_me/demo_webappcloud_me.ca-bundle --private-key fileb://C:/Users/Shinde/Documents/Anuja/MSIS_CourseWork/Semester3/CloudMain/SSL/PrivateKey.pem --region us-east-1 --profile demo
